@@ -1,18 +1,31 @@
-import { IsDate, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsDate, IsEnum, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApptmStatus } from 'src/entities/appointment.entity';
 
 
 export class CreateAppointmentDto {
-  @IsInt()
+  @IsNumber()
+  @IsNotEmpty()
   doctorId: number;
 
- @IsInt()
+ @IsNumber()
+ @IsNotEmpty()
   patientId: number;
 
 @Type(() => Date) @IsDate()
   fechahora: Date;
 
-  
+  @IsOptional()
+  specialty?: string;
+
+  @IsOptional()
+  sede?: string; 
+
+  @IsOptional()
+  mode?: string;  
+
+  @IsEnum(ApptmStatus)
+  status: ApptmStatus;
 
 
 }

@@ -1,118 +1,185 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Appointment, ApptmStatus } from 'src/entities/appointment.entity';
-import { toZonedTime } from 'date-fns-tz';
-import { DoctorsService } from '../doctors/doctors.service';
-import { PatientsService } from 'src/patients/patients.service';
-import { AppointmentConflictException } from 'src/exceptions/appointment-conflict.exception';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Doctor } from 'src/entities/doctor.entity';
+import { Patient } from 'src/entities/patient.entity';
+import { Repository } from 'typeorm';
+import { CreateAppointmentDto } from 'src/dto/create-appointment.dto';
+import { UpdateAppointmentDto } from 'src/dto/update-appointment.dto';
 
 @Injectable()
 export class AppointmentsService {
 
-     private apptms: Appointment[] = [
-        {
-            id: 1,
-            doctorId: 1,
-            patientId: 1,
-            status: ApptmStatus.SCHEDULED,
-            createdAt: new Date(),
-            fechahora: new Date(),
-            specialty: 'NEUROLOGIA',
-            sede: 'SANBORJA',
-            mode: 'PRESENCIAL'
+  apptms: any;
+  doctorsService: any;
+  patientsService: any;
+  nextId: any;
+
+
+    constructor(
+        @InjectRepository(Appointment)
+        private appointmentRepository: Repository<Appointment>,        
+        @InjectRepository(Doctor)
+        private doctorRepository: Repository<Doctor>,
+        @InjectRepository(Patient)
+        private patientRepository: Repository<Patient>,
+
+    ){}
+
+
+
+    async create(createAppointmentDto: CreateAppointmentDto): Promise<Appointment>{
+
+        const doc = await this.doctorRepository.findOne({
+            where: {id: createAppointmentDto.doctorId}
+        });
+
+        if(!doc){
+            throw new NotFoundException('Doctor no encontrado')
         }
-    ];
 
-    private nextId = 2;
-    constructor(private readonly doctorsService: DoctorsService, private readonly patientsService: PatientsService){}
-    private timeZone = 'America/Lima';
 
-    findAll(){
-    return this.apptms;
-    }
+        const pt = await this.patientRepository.findOne({
+            where: {id: createAppointmentDto.patientId}
+        });
 
-   private toLocalDate(date: Date): Date {
-     return toZonedTime(date,this.timeZone);
-    }
+        if(!pt){
+            throw new NotFoundException('Paciente no encontrado')
+        }
 
-    private isBusinessDay(date: Date) {
-      const local = this.toLocalDate(date);
-      const d = date.getDay();
-      return d >= 1 &&  d <= 6;
-    }
+        const appointmentDate = new Date(createAppointmentDto.fechahora);
 
-    private isBusinessHour(date: Date){
-      const local = this.toLocalDate(date);
-      const hour = local.getHours();
-      const min = local.getMinutes();
-      if(hour < 8) return false;
-      if(hour > 17) return false;
-      if(hour === 17 && min > 59) return false;
-      return true;
-    }
+        const day = appointmentDate.getDay();
+        const hour = appointmentDate.getHours();
 
-    scheduleAppointment(input: {
-      doctorId: number;
-      patientId: number;
-      fechahora: Date;
+        if(day === 0 || hour === 6){
+          throw new BadRequestException('Las citas solo pueden agendarse de Lunes a Viernes');
+        }
 
-    }) {
-         const { doctorId,patientId, fechahora } = input;
-
-          // 1) Doctor existe
-          const doctor = this.doctorsService.findOne(doctorId);
-          if (!doctor) throw new NotFoundException(`Doctor ${doctorId} no existe`);
-
-         // 2) Paciente existe
-          const pcte = this.patientsService.findOne(patientId);
-          if (!pcte) throw new NotFoundException(`Paciente ${patientId} no existe`);
-
-          // 3) Fecha futura
-          const now = new Date();
-          if (fechahora.getTime() <= now.getTime()) {
+        if(hour < 8 || hour > 18){
+          throw new BadRequestException('Las citas solo pueden agendarse de Lunes a Viernes de 8 a 18 horas');
+        }     
+        
+        const now = new Date();
+        if (appointmentDate.getTime() <= now.getTime()) {
              throw new BadRequestException('La fecha de la cita debe ser futura.');
+        }
+
+        const existingAppointment = await this.appointmentRepository.findOne({
+           where: {
+             doctor: { id: doc.id },
+             fechahora: appointmentDate,
+           },
+           relations: ['doctor'],
+        }); 
+
+        if (existingAppointment) {
+           throw new BadRequestException('El doctor ya tiene una cita reservada en ese horario');
+        }
+        
+
+        const appt = this.appointmentRepository.create({
+            ...createAppointmentDto,
+            doctor: doc,
+            patient: pt
+        });
+
+
+        return await this.appointmentRepository.save(appt);
+
+    }
+
+    async findAll(): Promise<Appointment[]>{
+     return await this.appointmentRepository.find({
+        relations: ['doctor', 'patient'],
+        order: {fechahora: 'ASC'},
+     });
+    }
+
+    async findOne(id: number): Promise<Appointment>{
+     const appt = await this.appointmentRepository.findOne({
+      where: { id },  
+      relations: ['doctor', 'patient'],
+     });
+
+     if(!appt){
+       throw new NotFoundException(`Cita con id ${id} no encontrada`);
+     }
+     return appt;
+
+    }
+
+    async update (id: number, updateAppointmentDto: UpdateAppointmentDto ): Promise<Appointment>{
+       const appt = await this.findOne(id);
+
+       if(updateAppointmentDto.doctorId) {
+         const doc = await this.doctorRepository.findOne({
+            where: { id: updateAppointmentDto.doctorId},
+         });
+         if(!doc){
+            throw new NotFoundException('Doctor no encontrado');
+         }
+         appt.doctor = doc;
+       }
+
+       if(updateAppointmentDto.patientId) {
+         const pt = await this.patientRepository.findOne({
+            where: { id: updateAppointmentDto.patientId},
+         });
+         if(!pt){
+            throw new NotFoundException('Paciente no encontrado');
+         }
+         appt.patient = pt;
+       }
+
+       // 📌 Validar la fecha nueva (si viene en el DTO)
+       if (updateAppointmentDto.fechahora) {
+         const fecha = new Date(updateAppointmentDto.fechahora);
+
+          // 1. Validar día de la semana (1=Lunes ... 5=Viernes)
+          const day = fecha.getDay(); // 0=Domingo, 6=Sábado
+          if (day === 0 || day === 6) {
+            throw new BadRequestException('La cita debe ser de lunes a viernes.');
           }
 
-          // 4) Horario laboral: Lun–Sáb 08:00–18:00
-          if (!this.isBusinessDay(fechahora) || !this.isBusinessHour(fechahora)) {
-            throw new BadRequestException('La cita debe estar dentro del horario laboral (Lun–Sáb, 08:00–18:00).');
-           }
+          // 2. Validar hora (8 a 17)
+          const hour = fecha.getHours();
+          if (hour < 8 || hour >= 17) {
+            throw new BadRequestException('La cita debe estar entre las 08:00 y 17:00 horas.');
+          }
 
-          // 5) Sin conflicto mismo veterinario + misma hora exacta
-            const conflict = this.apptms.find(a =>
-            a.doctorId === doctorId &&
-            a.fechahora.getTime() === fechahora.getTime() &&
-            a.status === 'scheduled'
-            );
-            if (conflict) {
-            throw new AppointmentConflictException(doctorId, fechahora);
-            }
-
-            // 5) Reglas por servicio/edad
-           // if (service === ApptService.SURGERY && !pet.isVaccinated) {
-            //throw new VaccinationRequiredException(petId,pet.name);
-            //}
-            //if (pet.age < 3 && service !== ApptService.CONSULTATION) {
-            //throw new BadRequestException('Mascotas menores a 3 meses solo pueden recibir consultas.');
-            //}
-
-            // Crear
-            const appt: Appointment = {
-            id: this.nextId++,
-            doctorId,
-            patientId,
-            fechahora,
-            specialty: this.doctorsService.findDoctorSpecialty(doctorId),
-            sede: this.doctorsService.findDoctorSede(doctorId),
-            mode: this.doctorsService.findDoctorMode(doctorId),
-            status: ApptmStatus.SCHEDULED,
-            createdAt: new Date(),
-            };
-            this.apptms.push(appt);
-            return appt;
+        const now = new Date();
+        if (fecha.getTime() <= now.getTime()) {
+             throw new BadRequestException('La fecha de la cita debe ser futura.');
         }
 
+          // 3. Validar conflicto con otra cita del mismo doctor
+          const conflict = await this.appointmentRepository.findOne({
+            where: {
+              doctor: appt.doctor,
+              fechahora: fecha,
+            },
+          });
 
+          if (conflict && conflict.id !== appt.id) {
+          throw new BadRequestException('Ya existe una cita para ese doctor en esa fecha y hora.');
+          }
 
+           appt.fechahora = fecha;
+        }
+
+        const { doctorId, patientId, ...rest } = updateAppointmentDto;
+
+       Object.assign(appt, rest);
+       
+       return await this.appointmentRepository.save(appt);
+
+    }
+
+    async remove(id: number): Promise<void> {
+      const appt = await this.findOne(id);
+      await this.appointmentRepository.remove(appt);
+    }
 
 
 }

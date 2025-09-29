@@ -1,78 +1,73 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { CreatePatientDto } from 'src/dto/create-patient.dto';
-import { Patient, patientsex } from 'src/entities/patient.entity';
+import { UpdatePatientDto } from 'src/dto/update-patient.dto';
+import { Patient } from 'src/entities/patient.entity';
+import { Repository } from 'typeorm';
 
 @Injectable()
 export class PatientsService {
 
-  private patients: Patient[] = [
-        {
-        id: 1,
-        name: 'Carlos Zegarra',
-        email: 'cazesa@gmail.com',
-        age: 24,  
-        weight: 70,
-        height: 170,
-        sex: patientsex.MALE,
-        hasdiagnoses: true,
-        diagnoses: 'diabetes',
-        insured: true,
-        insurancecompany: 'Rimac Seguros',
-        activeAppointments: 1,
-        createdAt: new Date('2025-04-30')
-        },
-        {
-        id: 2,
-        name: 'Alfonso Bernabe',
-        email: 'alfonsobe@gmail.com',
-        age: 37,  
-        weight: 80,
-        height: 176,
-        sex: patientsex.MALE,
-        hasdiagnoses: false,
-        insured: true,
-        insurancecompany: 'Pacifico Seguros',
-        activeAppointments: 1,
-        createdAt: new Date('2025-04-30')
-        },
-        {
-        id: 3,
-        name: 'Monica Espino',
-        email: 'moni@gmail.com',
-        age: 37,  
-        weight: 70,
-        height: 154,
-        sex: patientsex.FEMALE,
-        hasdiagnoses: false,
-        insured: true,
-        insurancecompany: 'Rimac Seguros',
-        activeAppointments: 1,
-        createdAt: new Date('2025-04-30')
-        }       
-    ];
+    constructor(
+      @InjectRepository(Patient)
+      private readonly patientRepository: Repository<Patient>  
+    ){}
 
-    private nextId = 4;
-
-    findAll(): Patient[] {
-        return this.patients;
-    }
-
-    findOne(id: number): Patient{
-        const patient = this.patients.find(p => p.id === id);
-        if (!patient) throw new NotFoundException (`Paciente ${id} no existe`);
-        return patient;
-    }
-
-    create(data: CreatePatientDto) {
-
-     const pt: Patient = { id: this.nextId++, createdAt: new Date(), activeAppointments: 0, ...data, };
-     this.patients.push(pt);
-     return pt;
+    async create(createPatientDto: CreatePatientDto): Promise<Patient>{
+          
+        const existingPatient = await this.patientRepository.findOne({
+          where: { email: createPatientDto.email }
+        })
+    
+        if(existingPatient){
+          throw new ConflictException('El paciente ya está registrado');
+        }
+    
+        const pt = this.patientRepository.create(createPatientDto);
+    
+        return await this.patientRepository.save(pt);
     }
 
 
+    async findAll(): Promise<Patient[]>{
+        return await this.patientRepository.find({
+             relations: ['appointments'],
+             order: { createdAt: 'DESC'}
+        });
+    }
 
 
+    async findOne(id: number): Promise<Patient>{
+        const pt = await this.patientRepository.findOne({
+            where: {id},
+            relations: ['appointments']
+        });
+
+        if(!pt){
+            throw new NotFoundException(`Paciente con ID ${id} no encontrado`)
+        }
+        return pt;
+    }
+
+    async update(id: number, updatePatientDto: UpdatePatientDto): Promise<Patient>{
+            const pt = await this.findOne(id);
+    
+            Object.assign(pt, updatePatientDto)
+    
+            return await this.patientRepository.save(pt);
+    }
+    
+    async remove(id: number): Promise<void>{
+        const pt = await this.findOne(id);
+        await this.patientRepository.remove(pt);
+    }
+
+    async findByEmail(email: string): Promise<Patient | null>{
+        return await this.patientRepository.findOne({
+            where: {email},
+            select: ['id','name','email']
+        });
+    }
 
 
 }
