@@ -3,10 +3,10 @@ import { Doctor } from "./doctor.entity";
 import { Patient } from "./patient.entity";
 
 export enum ApptmStatus{
-    SCHEDULED = 'scheduled',
-    PENDING = 'pending',
-    PAYED = 'payed',
-    CANCELLED = 'cancelled'
+    SCHEDULED = 'Programado',
+    PENDING = 'Pendiente',
+    PAYED = 'Pagado',
+    CANCELLED = 'Cancelado'
 }
 
 @Entity('appointments')
